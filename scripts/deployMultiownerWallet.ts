@@ -3,6 +3,7 @@ import { Multisig } from '../wrappers/Multisig';
 import { compile, NetworkProvider, UIProvider } from '@ton/blueprint';
 import { blackholeAddress } from "./utils";
 
+// MODIFY: we can easily change prompting to read from database or files anytime we want
 async function userPrompt(ui: UIProvider): Promise<{
     threshold: number;
     signers: Address[];

@@ -1,8 +1,9 @@
-import { Address, beginCell, internal, SendMode, toNano } from '@ton/core';
-import { Multisig } from '../wrappers/Multisig';
-import { compile, NetworkProvider, UIProvider } from '@ton/blueprint';
-import { blackholeAddress, getTonTransferMsg, sleepMs } from "./utils";
+import { Address, SendMode, toNano } from '@ton/core';
+import { Multisig, TransferRequest, UpdateRequest } from '../wrappers/Multisig';
+import { NetworkProvider, UIProvider } from '@ton/blueprint';
+import { getJettonTransferMsg, getTonTransferMsg, sleepMs, getCustomizedAddresses, getNftTransferMsg, getJettonBurnMsg } from "./utils";
 
+// MODIFY: we can easily change prompting to read from database or files anytime we want
 async function userPrompt(ui: UIProvider): Promise<{
     multisigAddress: Address,
     expireAfterSeconds: number,
@@ -45,18 +46,56 @@ export async function run(provider: NetworkProvider) {
         proposers: proposers.map(a => a.toString()),
     }, null, 2)}`);
 
+    // MODIFY: change or add any actions here
+    const { proposerAddress: randomPeopleAddress, multisigJettonWalletAddress, nftItemAddress } = getCustomizedAddresses() // TODO: bad practice, for POC purposes
     // action: ton transfer (3 ton)
-    const messagePayload = getTonTransferMsg(Address.parse("0QDrC2F-S08ss7dzaAHPiSERynMgRAngojBlNxGtoV6BalRI"), toNano("3"));
+    const tonReceiver = randomPeopleAddress
+    const actionTonTransferPayload: TransferRequest = {
+        type: 'transfer',
+        sendMode: SendMode.PAY_GAS_SEPARATELY + SendMode.IGNORE_ERRORS,
+        message: getTonTransferMsg(tonReceiver, toNano("3"))
+    }
+    // action: update configurations (remove all proposers)
+    const actionConfigUpdatePayload: UpdateRequest = {
+        type: 'update',
+        threshold: Number(threshold),
+        signers: [...signers],
+        proposers: [],
+    }
+    // action: jetton transfer (10 jettons)
+    const jettonReceiver = randomPeopleAddress
+    const senderJettonWallet = multisigJettonWalletAddress
+    const jettonTransferNotificationReceiver = params.multisigAddress
+    const jettonTransferAmount = 1000000000000000000n
+    const actionJettonTransferPayload: TransferRequest = {
+        type: 'transfer',
+        sendMode: SendMode.PAY_GAS_SEPARATELY + SendMode.IGNORE_ERRORS,
+        message: getJettonTransferMsg(senderJettonWallet, jettonReceiver, jettonTransferNotificationReceiver, jettonTransferAmount)
+    }
+    // action: nft transfer
+    const nftReceiver = randomPeopleAddress
+    const nftItem = nftItemAddress
+    const nftTransferNotificationReceiver = params.multisigAddress
+    const actionNftTransferPayload: TransferRequest = {
+        type: 'transfer',
+        sendMode: SendMode.PAY_GAS_SEPARATELY + SendMode.IGNORE_ERRORS,
+        message: getNftTransferMsg(nftItem, nftReceiver, nftTransferNotificationReceiver)
+    }
+    // action: jetton burn
+    const burnerJettonWallet = multisigJettonWalletAddress
+    const burnNotificationReceiver = params.multisigAddress
+    const jettonBurnAmount = 1000000000000000000n
+    const actionJettonBurnPayload: TransferRequest = {
+        type: 'transfer',
+        sendMode: SendMode.PAY_GAS_SEPARATELY + SendMode.IGNORE_ERRORS,
+        message: getJettonBurnMsg(burnerJettonWallet, burnNotificationReceiver, jettonBurnAmount)
+    }
 
     // create new order
     await multiownerWallet.sendNewOrder(provider.sender(),
-        [{
-            type: 'transfer',
-            sendMode: SendMode.PAY_GAS_SEPARATELY + SendMode.IGNORE_ERRORS,
-            message: messagePayload
-        }],
-        Math.floor(Date.now() / 1000 + params.expireAfterSeconds), // expired in hour
-        toNano('0.005'), // ton amount
+        [actionNftTransferPayload], // or [actionConfigUpdatePayload, actionJettonTransferPayload, ...]
+        Math.floor(Date.now() / 1000 + params.expireAfterSeconds), // expire time
+        toNano('0.1'), // ton amount
         params.proposerInfo.index, // index
         params.proposerInfo.isSigner, // not signer
         params.orderSeqno // order_seqno

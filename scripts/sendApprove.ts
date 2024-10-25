@@ -1,8 +1,9 @@
-import { Address, beginCell, Cell, SendMode, toNano } from '@ton/core';
+import { Address, beginCell, Cell } from '@ton/core';
 import { compile, NetworkProvider, UIProvider } from '@ton/blueprint';
-import { getTonTransferMsg, sleepMs } from "./utils";
+import { sleepMs } from "./utils";
 import { Order } from '../wrappers/Order';
 
+// MODIFY: we can easily change prompting to read from database or files anytime we want
 async function userPrompt(ui: UIProvider): Promise<{
     multisigAddress: Address,
     orderSeqno: number,
