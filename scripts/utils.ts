@@ -1,33 +1,39 @@
-import { sleep } from "@ton/blueprint";
 import { Address, beginCell, Cell, internal, toNano } from "@ton/core"
 
-export const blackholeAddress = Address.parse('EQD__________________________________________0vo')
+export abstract class JettonOp {
+    // to Wallet
+    static readonly JettonTransfer = 0x0f8a7ea5
+    static readonly JettonCallTo = 0x235caf52
 
-export const Op = {
-    new_order: 0xf718510f,
-    execute: 0x75097f5d,
-    execute_internal: 0xa32c59bf,
+    // to Jetton Wallet
+    static readonly JettonInternalTransfer = 0x178d4519
+    static readonly JettonNotify = 0x7362d09c
+    static readonly JettonBurn = 0x595f07bc
+    static readonly JettonBurnNotification = 0x7bdd97de
+    static readonly JettonSetStatus = 0xeed236d3
 
-    init: 0x9c73fba2,
-    approve: 0xa762230f,
-    approve_accepted: 0x82609bf6,
-    approve_rejected: 0xafaf283e,
-
-    send_message: 0xf1381e5b,
-    update_multisig_params: 0x1d0cfbd3,
+    // to Jetton Master
+    static readonly JettonMint = 0x642b7d07
+    static readonly JettonChangeAdmin = 0x6501f354
+    static readonly JettonClaimAdmin = 0xfb88e119
+    static readonly JettonDropAdmin = 0x7431f221
+    static readonly JettonChangeMetadata = 0xcb862902
+    static readonly JettonUpgrade = 0x2508d66a
 }
+
+export const blackholeAddress = Address.parse('EQD__________________________________________0vo')
 
 export const sleepMs = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 export function getJettonInternalTransferMsg(jettonAmount: bigint, toAddress: Address, responseAddress: Address, queryId: number = 0) {
     const internalTransferPayload = beginCell()
-        .storeUint(0x178d4519, 32) // internal_transfer
+        .storeUint(JettonOp.JettonInternalTransfer, 32) // internal_transfer
         .storeUint(queryId, 64) // query_id
         .storeCoins(jettonAmount) // jetton amount
         .storeAddress(responseAddress) // from address (may be ignored)
         .storeAddress(responseAddress) // response address
         .storeCoins(0) // forward payload
-        .storeBit(false) // no forward
+        .storeBit(false) // no forwardㄉ
         .endCell();
 
     return internal({
