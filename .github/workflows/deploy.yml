@@ -30,7 +30,7 @@ jobs:
               run: yarn install && yarn scaffold
 
             - name: Install scafflold dependencies
-              run: cd dapp && yarn install
+              run: cd dapp && yarn add buffer && yarn install
 
             - name: Build scafflold
               run: cd dapp && yarn build
