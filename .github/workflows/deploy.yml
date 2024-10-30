@@ -27,7 +27,7 @@ jobs:
                   cache: 'yarn'
 
             - name: Generate scafflold
-              run: yarn scaffold
+              run: yarn install && yarn scaffold
 
             - name: Install scafflold dependencies
               run: cd dapp && yarn install
