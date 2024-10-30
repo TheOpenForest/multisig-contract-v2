@@ -1,63 +1,115 @@
-import {Address, beginCell, toNano} from '@ton/core';
-import {Multisig} from '../wrappers/Multisig';
-import {compile, NetworkProvider} from '@ton/blueprint';
+import { Address, SendMode, toNano } from '@ton/core';
+import { Multisig, TransferRequest, UpdateRequest } from '../wrappers/Multisig';
+import { NetworkProvider, UIProvider } from '@ton/blueprint';
+import { getJettonTransferMsg, getTonTransferMsg, sleepMs, getCustomizedAddresses, getNftTransferMsg, getJettonBurnMsg } from "./utils";
+
+// MODIFY: we can easily change prompting to read from database or files anytime we want
+async function userPrompt(ui: UIProvider): Promise<{
+    multisigAddress: Address,
+    expireAfterSeconds: number,
+    proposerInfo: {
+        isSigner: boolean,
+        index: number,
+    },
+    orderSeqno: bigint
+}> {
+    const multisigAddress = await ui.inputAddress('Enter multisig address');
+    const expireAfterSeconds = Number(await ui.input('Enter expiration date in seconds (number only)'));
+    const isSigner: boolean = await ui.choose('Is proposer signer?', [true, false], (x) => x ? 'yes' : 'no');
+    const index = Number(await ui.input('Enter proposer address book index (number only)'));
+    const orderSeqno = BigInt(await ui.input('Enter order seqno (number only)'));
+
+    return { multisigAddress, expireAfterSeconds, proposerInfo: { isSigner, index }, orderSeqno };
+}
 
 export async function run(provider: NetworkProvider) {
-    const multisig_code = await compile('Multisig');
+    // prompt user
+    const ui = provider.ui()
+    const params = await userPrompt(ui);
 
-    // deploy multisig
+    // multisig should be deployed
+    const _multisig = provider.open(new Multisig(params.multisigAddress));
+    const { nextOrderSeqno, threshold, signers, proposers } = await _multisig.getMultisigData();
+    const multisig = new Multisig(params.multisigAddress, undefined, {
+        threshold: Number(threshold),
+        signers,
+        proposers,
+        allowArbitrarySeqno: nextOrderSeqno === -1n ? true : false
+    });
+    multisig.orderSeqno = nextOrderSeqno;
+    const multiownerWallet = provider.open(multisig);
 
-    const multiownerWallet = provider.open(Multisig.createFromConfig({
-        threshold: 2,
-        signers: [Address.parse('UQBONmT67oFPvbbByzbXK6xS0V4YbBHs1mT-Gz8afP2AHdyt'), Address.parse('0QAR0lJjOVUzyT4QBKg50k216RBqvpvEPlq2_xGtdMkgFgcY'), Address.parse('UQAGkOdcs7i0OomLkySkVdiLbzriH4ptQAgYWqHRVK2vXO4z')],
-        proposers: [Address.parse('0QAR0lJjOVUzyT4QBKg50k216RBqvpvEPlq2_xGtdMkgFgcY')],
-        allowArbitrarySeqno: true
-    }, multisig_code));
+    console.log(`multisig contract config: ${JSON.stringify({
+        nextOrderSeqno: Number(nextOrderSeqno),
+        threshold: Number(threshold),
+        signers: signers.map(a => a.toString()),
+        proposers: proposers.map(a => a.toString()),
+    }, null, 2)}`);
+
+    // MODIFY: change or add any actions here
+    const { proposerAddress: randomPeopleAddress, multisigJettonWalletAddress, nftItemAddress } = getCustomizedAddresses() // TODO: bad practice, for POC purposes
+    // action: ton transfer (3 ton)
+    const tonReceiver = randomPeopleAddress
+    const actionTonTransferPayload: TransferRequest = {
+        type: 'transfer',
+        sendMode: SendMode.PAY_GAS_SEPARATELY + SendMode.IGNORE_ERRORS,
+        message: getTonTransferMsg(tonReceiver, toNano("3"))
+    }
+    // action: update configurations (remove all proposers)
+    const actionConfigUpdatePayload: UpdateRequest = {
+        type: 'update',
+        threshold: Number(threshold),
+        signers: [...signers],
+        proposers: [],
+    }
+    // action: jetton transfer (10 jettons)
+    const jettonReceiver = randomPeopleAddress
+    const senderJettonWallet = multisigJettonWalletAddress
+    const jettonTransferNotificationReceiver = params.multisigAddress
+    const jettonTransferAmount = 1000000000000000000n
+    const actionJettonTransferPayload: TransferRequest = {
+        type: 'transfer',
+        sendMode: SendMode.PAY_GAS_SEPARATELY + SendMode.IGNORE_ERRORS,
+        message: getJettonTransferMsg(senderJettonWallet, jettonReceiver, jettonTransferNotificationReceiver, jettonTransferAmount)
+    }
+    // action: nft transfer
+    const nftReceiver = randomPeopleAddress
+    const nftItem = nftItemAddress
+    const nftTransferNotificationReceiver = params.multisigAddress
+    const actionNftTransferPayload: TransferRequest = {
+        type: 'transfer',
+        sendMode: SendMode.PAY_GAS_SEPARATELY + SendMode.IGNORE_ERRORS,
+        message: getNftTransferMsg(nftItem, nftReceiver, nftTransferNotificationReceiver)
+    }
+    // action: jetton burn
+    const burnerJettonWallet = multisigJettonWalletAddress
+    const burnNotificationReceiver = params.multisigAddress
+    const jettonBurnAmount = 1000000000000000000n
+    const actionJettonBurnPayload: TransferRequest = {
+        type: 'transfer',
+        sendMode: SendMode.PAY_GAS_SEPARATELY + SendMode.IGNORE_ERRORS,
+        message: getJettonBurnMsg(burnerJettonWallet, burnNotificationReceiver, jettonBurnAmount)
+    }
 
     // create new order
-
-    const masterMsg = beginCell()
-        .storeUint(0x178d4519, 32) // internal_transfer
-        .storeUint(0, 64) // query_id
-        .storeCoins(5000000000n) // jetton amount
-        .storeAddress(Address.parse('0QAR0lJjOVUzyT4QBKg50k216RBqvpvEPlq2_xGtdMkgFgcY')) // from address (will be ignored)
-        .storeAddress(Address.parse('0QAR0lJjOVUzyT4QBKg50k216RBqvpvEPlq2_xGtdMkgFgcY')) // response address
-        .storeCoins(0) // forward payload
-        .storeBit(false) // no forward
-        .endCell();
-
-    await multiownerWallet.sendNewOrder(provider.sender(), [{
-        type: 'transfer',
-        sendMode: 3,
-        message: {
-            info: {
-                type: 'internal',
-                ihrDisabled: false,
-                bounce: true,
-                bounced: false,
-                dest: Address.parse('EQAZym3GBvem-frRGy1gUIaO-IBb5ByJPrm8aXtN7a_6PBW6'), // jetton-minter
-                value: {
-                    coins: toNano('1') // ton amount
-                },
-                ihrFee: 0n,
-                forwardFee: 0n,
-                createdLt: 0n,
-                createdAt: 0
-            },
-            body: beginCell()
-                .storeUint(0x642b7d07, 32) // mint
-                .storeUint(0, 64) // query_id
-                .storeAddress(Address.parse('0QAR0lJjOVUzyT4QBKg50k216RBqvpvEPlq2_xGtdMkgFgcY')) // mint to this regular wallet
-                .storeCoins(toNano('0.5')) // ton amount
-                .storeRef(masterMsg)
-                .endCell()
-        }
-    }],
-        Math.floor(Date.now() / 1000 + 3600), // expired in hour
-        toNano('1'), // ton amount
-        0, // index
-        false, // not signer
-        123n // order_seqno
+    await multiownerWallet.sendNewOrder(provider.sender(),
+        [actionNftTransferPayload], // or [actionConfigUpdatePayload, actionJettonTransferPayload, ...]
+        Math.floor(Date.now() / 1000 + params.expireAfterSeconds), // expire time
+        toNano('0.1'), // ton amount
+        params.proposerInfo.index, // index
+        params.proposerInfo.isSigner, // not signer
+        params.orderSeqno // order_seqno
     );
 
+    // wait for deployment
+    let orderAddress = null;
+    while (!orderAddress) {
+        await sleepMs(1000);
+        try {
+            orderAddress = await multiownerWallet.getOrderAddress(params.orderSeqno)
+            console.log("Order address:", orderAddress);
+        } catch (e) {
+            await sleepMs(3000);
+        }
+    }
 }
